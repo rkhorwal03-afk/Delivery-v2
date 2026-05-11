@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rider App | Lenskart Pali</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/html5-qrcode"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@4/dist/tesseract.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css">
+</head>
+<body class="bg-slate-50 min-h-screen">
+
+<nav class="bg-slate-900 text-white p-4 sticky top-0 z-[100] border-b border-slate-800">
+    <div class="max-w-xl mx-auto flex justify-between items-center">
+        <span class="font-black text-xs text-blue-400 uppercase">Lenskart · Rider</span>
+        <a href="index.html" class="text-[10px] font-bold uppercase opacity-60">Store</a>
+    </div>
+</nav>
+
+<main class="max-w-xl mx-auto p-4 space-y-6 pb-20">
+    <div class="bg-white rounded-[2rem] shadow-xl border p-8 space-y-6">
+        <div>
+            <label class="text-[10px] font-black text-blue-600 uppercase tracking-widest">1. Order Scan</label>
+            <button onclick="startScanner()" class="w-full mt-2 bg-blue-50 text-blue-700 font-black py-4 rounded-2xl uppercase text-xs flex items-center justify-center gap-2 border-2 border-blue-200">
+                <i class="fa-solid fa-qrcode"></i> Open Scanner
+            </button>
+            <div id="qr-reader" class="hidden mt-3 rounded-2xl overflow-hidden"></div>
+            <input type="text" id="orderId" placeholder="Order ID..." class="w-full mt-3 border-2 p-4 rounded-2xl font-black uppercase outline-none focus:border-blue-600">
+        </div>
+        
+        <div class="pt-4 border-t">
+            <label class="text-[10px] font-black text-slate-400 uppercase tracking-widest">2. Parcel Photos</label>
+            <div class="grid grid-cols-2 gap-4 mt-2">
+                <button onclick="capture('p1')" class="h-32 bg-slate-50 rounded-2xl border-2 border-dashed border-blue-200 flex flex-col items-center justify-center relative overflow-hidden">
+                    <i class="fa-solid fa-box text-blue-600 mb-1"></i><span class="text-[9px] font-black uppercase">Pic 1</span>
+                    <img id="prev-p1" class="hidden absolute inset-0 w-full h-full object-cover">
+                </button>
+                <button onclick="capture('p2')" class="h-32 bg-slate-50 rounded-2xl border-2 border-dashed border-blue-200 flex flex-col items-center justify-center relative overflow-hidden">
+                    <i class="fa-solid fa-box-open text-blue-600 mb-1"></i><span class="text-[9px] font-black uppercase">Pic 2</span>
+                    <img id="prev-p2" class="hidden absolute inset-0 w-full h-full object-cover">
+                </button>
+            </div>
+        </div>
+
+        <div class="pt-4 border-t">
+            <label class="text-[10px] font-black text-blue-600 uppercase tracking-widest">3. Tracking Scan (OCR)</label>
+            <button onclick="capture('label')" class="w-full mt-2 bg-blue-50 text-blue-600 p-4 rounded-2xl border-2 border-blue-300 flex items-center justify-center gap-2">
+                <i class="fa-solid fa-camera"></i><span class="text-[11px] font-black uppercase">Take Label Photo</span>
+            </button>
+            <input type="text" id="trackingId" placeholder="Tracking ID..." class="w-full mt-2 border-2 p-4 rounded-2xl font-bold uppercase focus:border-blue-600 outline-none">
+        </div>
+
+        <button onclick="sync()" id="syncBtn" class="w-full bg-slate-900 text-white font-black py-5 rounded-2xl uppercase text-xs shadow-lg flex justify-center items-center gap-2">
+            <i class="fa-solid fa-cloud-arrow-up"></i> Sync Dispatch
+        </button>
+    </div>
+</main>
+
+<script>
+    const SB_URL = "https://hdumauwzcpzykhbjpotp.supabase.co";
+    const SB_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImhkdW1hdXd6Y3B6eWtoYmpwb3RwIiwicm9sZSI6ImFub24iLCJpYXQiOjE3Nzg0OTgyMTcsImV4cCI6MjA5NDA3NDIxN30.t4Vr_3GrLJSAuKpt4JAZ2ii7iSmFxkTcCyoqntGWZdg";
+    const supabase = supabase.createClient(SB_URL, SB_KEY);
+
+    let files = { p1: null, p2: null, label: null };
+    let scanner = null;
+
+    async function startScanner() {
+        const reader = document.getElementById('qr-reader');
+        reader.classList.remove('hidden');
+        scanner = new Html5Qrcode("qr-reader");
+        await scanner.start({ facingMode: "environment" }, { fps: 10, qrbox: 250 }, (text) => {
+            document.getElementById('orderId').value = text;
+            scanner.stop(); reader.classList.add('hidden');
+        });
+    }
+
+    function capture(type) {
+        const input = document.createElement('input');
+        input.type = 'file'; input.accept = 'image/*'; input.capture = 'environment';
+        input.onchange = e => {
+            if (e.target.files[0]) {
+                files[type] = e.target.files[0];
+                const prev = document.getElementById(`prev-${type}`);
+                if(prev) { prev.src = URL.createObjectURL(files[type]); prev.classList.remove('hidden'); }
+                if(type === 'label') runOCR(files[type]);
+            }
+        };
+        input.click();
+    }
+
+    async function runOCR(file) {
+        document.getElementById('syncBtn').innerText = "AI Reading Label...";
+        const res = await Tesseract.recognize(file, 'eng');
+        const id = res.data.text.match(/[A-Z0-9]{8,15}/);
+        if(id) document.getElementById('trackingId').value = id[0];
+        document.getElementById('syncBtn').innerHTML = '<i class="fa-solid fa-cloud-arrow-up"></i> Sync Dispatch';
+    }
+
+    async function sync() {
+        const id = document.getElementById('orderId').value.toUpperCase();
+        if(!id || !files.p1) return alert("Scan ID and Pic 1 required");
+        document.getElementById('syncBtn').innerText = "Uploading Photos...";
+
+        try {
+            const up = async (f, name) => {
+                const path = `${id}_${name}_${Date.now()}.jpg`;
+                const { data } = await supabase.storage.from('delivery-photos').upload(path, f);
+                return supabase.storage.from('delivery-photos').getPublicUrl(path).data.publicUrl;
+            };
+            const p1 = await up(files.p1, 'p1');
+            const p2 = files.p2 ? await up(files.p2, 'p2') : null;
+            const label = files.label ? await up(files.label, 'label') : null;
+
+            await supabase.from('orders').update({
+                status: 'Dispatch',
+                tracking_id: document.getElementById('trackingId').value,
+                parcel_1_url: p1, parcel_2_url: p2, label_img_url: label
+            }).eq('order_id', id);
+
+            alert("Synced!"); location.reload();
+        } catch (e) { alert("Fail: " + e.message); }
+    }
+</script>
+</body>
+</html>
